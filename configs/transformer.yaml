@@ -1,0 +1,37 @@
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+tokenizer:
+  vocab_size: ${model.vocab_size}
+  batch_size: 1280
+  save_path: "transformer_jax/models/tokenizer.json"
+
+exp:
+  name: one-gpu
+  train_seed: 3
+  batch_size: 32
+  num_shuffle_batches: 10
+  learning_rate: 3e-5
+  max_steps: 10_000_000
+  is_training: True
+  log_frequency: 50
+  grad_clip_value: 1
+  test_seed: 99
+  test_frequency: 100 # must be a multiple of log_frequency
+
+  
+model:
+  sequence_len: 64
+  key_size: 64
+  model_size: 512  # 1_024 for the large model
+  ff_size: 2_048  # 4_096 for the large model
+  vocab_size: 36_992
+  num_heads: 8  # 16 large
+  num_layers: 6
+  dropout_rate: 0.1
+
+debug:
+  jax_disable_jit: false
+  jax_log_compiles: false
