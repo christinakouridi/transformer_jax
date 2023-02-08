@@ -40,15 +40,7 @@ class BPETokenizer:
         trainer = BpeTrainer(
             show_progress=True,
             vocab_size=self.vocab_size,
-            special_tokens=[
-                "<cls>",
-                "<sep>",
-                "<unk>",
-                "<pad>",
-                "<mask>",
-                "<s>",
-                "</s>",
-            ],
+            special_tokens=["<cls>", "<sep>", "<unk>", "<pad>", "<mask>", "<s>", "</s>"]
         )
         self.tokenizer.train_from_iterator(self.batch_iterator(data), trainer)
         if self.tokenizer.get_vocab_size() != self.vocab_size:
@@ -74,8 +66,8 @@ def main(cfg: DictConfig):
         'Training a transformer in JAX is fun'
     )
     log.info(
-        f"Tokenisation before training of 'Training a transformer in JAX is "
-        f"fun': {pretokenized_sample}."
+        f"Tokenisation before training of 'Training a transformer in JAX is fun':"
+        f"{pretokenized_sample}."
     )
 
     data = load_dataset(path="wmt14", name="de-en", split="train")
@@ -95,8 +87,7 @@ def main(cfg: DictConfig):
     max_sequence_len_source = max(
         list(
             map(
-                lambda x: len(bpe.tokenizer.encode(x["en"]).tokens),
-                data["translation"]
+                lambda x: len(bpe.tokenizer.encode(x["en"]).tokens), data["translation"]
             )
         )
     )

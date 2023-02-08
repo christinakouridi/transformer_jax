@@ -15,8 +15,7 @@ from omegaconf import DictConfig
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
 
-from dataset import (encode_test_data, get_test_batch_iterator,
-                     get_train_batch_iterator)
+from dataset import encode_test_data, get_test_batch_iterator, get_train_batch_iterator
 from model import Transformer, TransformerConfig
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
@@ -27,7 +26,6 @@ logging.getLogger("datasets_modules").setLevel(logging.ERROR)
 
 class TrainingState(NamedTuple):
     """Container for the training state."""
-
     params: hk.Params
     opt_state: optax.OptState
     key: jnp.DeviceArray
@@ -78,12 +76,8 @@ def main(cfg: DictConfig):
     )
 
     rng_test = np.random.default_rng(cfg.exp.test_seed)
-    test_data_iterator = load_dataset(
-        path="wmt14", name="de-en", split="test"
-    )
-    test_data = encode_test_data(
-        test_data_iterator, tokenizer, cfg.model.sequence_len
-    )
+    test_data_iterator = load_dataset(path="wmt14", name="de-en", split="test")
+    test_data = encode_test_data(test_data_iterator, tokenizer, cfg.model.sequence_len)
 
     # ===== Training set up =====
     transformer_cfg = TransformerConfig(
@@ -98,9 +92,8 @@ def main(cfg: DictConfig):
     )
     optimiser = optax.chain(
         optax.clip_by_global_norm(cfg.exp.grad_clip_value),
-        optax.adam(
-            cfg.exp.learning_rate
-        ),  # TODO(CK): test if adafactor can reserve memory
+        # TODO(CK): test if adafactor can reserve memory
+        optax.adam(cfg.exp.learning_rate),
     )
 
     def forward(
@@ -110,27 +103,21 @@ def main(cfg: DictConfig):
         config: TransformerConfig,
     ) -> jnp.ndarray:
         """Performs a forward pass through the model.
-        The source and target masks that indicate padding are recomputed on the
-        fly to reserve memory.
+
+        The source and target masks that indicate padding are recomputed on the fly to 
+        reserve memory.
         """
         model = Transformer(config=config)
-        return model(
-            source_tokens, target_tokens, is_training=is_training,
-        )
+        return model(source_tokens, target_tokens, is_training=is_training)
 
     @hk.transform
-    def loss_fn(
-        source_tokens, target_tokens, is_training: bool = True
-    ) -> jnp.ndarray:
-        """Computes the loss of the language model with respect to its
-        parameters."""
-        # TODO(CK): differences in indexing with other implementations
+    def loss_fn(source_tokens, target_tokens, is_training: bool = True) -> jnp.ndarray:
+        """Computes the loss of the language model with respect to its parameters."""
+        # TODO(CK): check indexing
         logits = forward(
             source_tokens, target_tokens, is_training, transformer_cfg
         )  # [B, T, V]
-        targets = jax.nn.one_hot(
-            target_tokens, cfg.model.vocab_size
-        )  # [B, T, V]
+        targets = jax.nn.one_hot(target_tokens, cfg.model.vocab_size)  # [B, T, V]
 
         mask = jnp.greater(source_tokens, 0)  # TODO(CK): needed?
         log_likelihood = jnp.sum(targets * jax.nn.log_softmax(logits), axis=-1)

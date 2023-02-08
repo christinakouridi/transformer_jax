@@ -9,9 +9,9 @@ import jax.numpy as jnp
 def layer_norm(x: jnp.ndarray, name: Optional[str] = None) -> jnp.ndarray:
     """Layer normalisation.
 
-    It normalizes each sample in the batch independently across all features.
-    This means that layer normalisation is not a simple re-parameterization
-    of the network like batch and weight normalisation.
+    It normalizes each sample in the batch independently across all features. This means 
+    that layer normalisation is not a simple re-parameterization of the network like 
+    batch and weight normalisation.
     """
     return hk.LayerNorm(
         axis=-1, create_scale=True, create_offset=True, name=name
@@ -36,9 +36,7 @@ class Embeddings(hk.Module):
     def __init__(self, model_size: int, vocab_size: int) -> jnp.ndarray:
         super().__init__()
         self.token_embedding_map = hk.Embed(
-            vocab_size, model_size, w_init=hk.initializers.TruncatedNormal(
-                stddev=0.02
-            )
+            vocab_size, model_size, w_init=hk.initializers.TruncatedNormal(stddev=0.02)
         )  # [V, D]
         self.model_size = model_size
 
@@ -54,10 +52,9 @@ class Embeddings(hk.Module):
 class PositionalEmbeddings(hk.initializers.Initializer):
     """Fixed positional embeddings layer.
 
-    Encodes the abolute position of tokens, giving the model useful information
-    on their order in the sequence. Specifically a positional embedding is
-    derived from a sinusoid function for dimensions with even indices, and a
-    cosine function with odd indices:
+    Encodes the abolute position of tokens, giving the model useful information on their 
+    order in the sequence. Specifically a positional embedding is derived from a sinusoid
+    function for dimensions with even indices, and a cosine function with odd indices:
 
         - PE(pos, 2i) = sin(pos/10000^(2i/model_size))
         - PE(pos, 2i+1) = cos(pos/10000^(2i/model_size))
@@ -79,10 +76,9 @@ class PositionalEmbeddings(hk.initializers.Initializer):
 
 
 class FFNBlock(hk.Module):
-    """Feed forward neural netwrk block, applied to each token independently
-    unlike the attention layers.
+    """Feed forward neural netwrk block, applied to each token independently unlike the
+    attention layers.
     """
-
     def __init__(
         self,
         ff_size: int,
@@ -133,10 +129,10 @@ class MultiHeadAttention(hk.Module):
           num_heads: Number of independent attention heads (H).
           key_size: The size of keys (K) and queries (Q) used for attention.
           w_init: Initializer for weights in the linear projections.
-          value_size: Optional size of the value projection (V). If None,
-            defaults to the key size (K).
-          model_size: Optional size of the output embedding (D). If None,
-            defaults to the key size multiplied by the number of heads (K * H).
+          value_size: Optional size of the value projection (V). If None, defaults to the
+            key size (K).
+          model_size: Optional size of the output embedding (D). If None, defaults to the
+            key size multiplied by the number of heads (K * H).
           name: Optional name for this module.
         """
         super().__init__(name=name)
@@ -155,9 +151,7 @@ class MultiHeadAttention(hk.Module):
         name: Optional[str] = None,
     ) -> jnp.ndarray:
         # [B, T, K] -> [B, T, H * K]
-        y = hk.Linear(
-                self.num_heads * head_size, w_init=self.w_init, name=name
-            )(x)
+        y = hk.Linear(self.num_heads * head_size, w_init=self.w_init, name=name)(x)
         *leading_dims, _ = x.shape
         return y.reshape((*leading_dims, self.num_heads, head_size))
 
@@ -189,59 +183,49 @@ class MultiHeadAttention(hk.Module):
             query, self.key_size, "query"
         )  # [T, H, K]
         key_projection = self._linear_projection(key, self.key_size, "key")
-        value_projection = self._linear_projection(
-            value, self.value_size, "value"
-        )  # [T, H, K]
+        value_projection = self._linear_projection(value, self.value_size, "value")
 
         # Compute the attention logits. Divide by factor such that when the
         # queries and keys have unit variance, the attention weights will have
         # unit variance, allowing softmax to stay diffuse and not saturate much.
         attn_logits = jnp.einsum(
             "bthk,bThk->bhtT", query_projection, key_projection
-        ) / jnp.sqrt(
-            self.key_size
-        )  # [B, H, T, T]
+        ) / jnp.sqrt(self.key_size)  # [B, H, T, T]
 
         # Compute attention weights.
         if mask is not None:
             if mask.ndim != attn_logits.ndim:
                 raise ValueError(
-                    f"The mask and attention logits must have the same number"
-                    f"of dimensions. The mask has {mask.ndim} dimensions and"
-                    f"the attention logits {attn_logits}."
+                    f"The mask and attention logits must have the same number of"
+                    f"dimensions. The mask has {mask.ndim} dimensions and the attention"
+                    f"logits {attn_logits}."
                 )
             # The mask is the same for all heads.
-            attn_logits = jnp.where(
-                mask, attn_logits, self.neg_inf  # [B, H, T, T]
-            )
+            attn_logits = jnp.where(mask, attn_logits, self.neg_inf)  # [B, H, T, T]
 
         attn_weights = jax.nn.softmax(attn_logits)  # [B, H, T, T]
 
         # Weight the values by the attention and flatten the head vectors.
-        value_weighted = jnp.einsum(
-            "bhtT, bThk -> bthk", attn_weights, value_projection
-        )
+        value_weighted = jnp.einsum("bhtT, bThk -> bthk", attn_weights, value_projection)
         value_weighted = jnp.reshape(
             value_weighted, (*leading_dims, sequence_len, -1)
         )  # [B, T, H * K]
 
         # Apply another projection to get the final embeddings.
-        output = hk.Linear(self.model_size, w_init=self.w_init)(
-            value_weighted
-        )  # [B, T, D]
-        return output
+        output = hk.Linear(self.model_size, w_init=self.w_init)(value_weighted)
+        return output  # [B, T, D]
 
 
 @dataclass
 class Encoder(hk.Module):
     """Encoder module of the transformer model.
 
-    It maps an input sequence of symbol representations (x1, ..., xn) to a
-    sequence of continuous representations z = (z1, ..., zn). The encoder
-    consists of a stack of identical layers applied in sequence, where each
-    layer performs the function: Dropout(SubLayer(LayerNorm(x))) + x. The
-    residual connections ensure that there's a strong gradient signal across the
-    model, and that information about the original sequence is not lost.
+    It maps an input sequence of symbol representations (x1, ..., xn) to a sequence of 
+    continuous representations z = (z1, ..., zn). The encoder consists of a stack of 
+    identical layers applied in sequence, where each layer performs the function: 
+    Dropout(SubLayer(LayerNorm(x))) + x. The residual connections ensure that there's a 
+    strong gradient signal across the model, and that information about the original 
+    sequence is not lost.
     """
 
     config: TransformerConfig
@@ -267,24 +251,19 @@ class Encoder(hk.Module):
         h = source_embeddings
         for _ in range(self.config.num_layers):
             # 1. Multi-head self-attention, Add & Norm
-            # Note that in the original paper normalisation was after attention,
-            # but the paper "Pre-LN Transformer: On Layer Normalization in the
-            # Transformer Architecture" shows that the scale of gradients will
-            # be lower, and thus training stability higher, if the layer
-            # normalization precedes attention.
+            # Note that in the original paper normalisation was after attention, but the
+            # paper "Pre-LN Transformer: On Layer Normalization in the Transformer
+            # Architecture" shows that the scale of gradients will be lower, and thus
+            # training stability higher, if the layer normalization precedes attention.
             h_norm = layer_norm(h)  # [B, T, D]
             h_attn = MultiHeadAttention(
                 self.config.num_heads,
                 self.config.key_size,
                 w_init,
                 model_size=self.config.model_size,
-            )(
-                h_norm, h_norm, h_norm, source_mask
-            )  # [B, T, D]
+            )(h_norm, h_norm, h_norm, source_mask)  # [B, T, D]
 
-            h_attn = hk.dropout(
-                rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn
-            )
+            h_attn = hk.dropout(rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn)
             h = h + h_attn
 
             # 2. FFN block
@@ -293,9 +272,7 @@ class Encoder(hk.Module):
                 self.config.ff_size, self.config.model_size, w_init=w_init
             )(x=h_norm)
 
-            h_dense = hk.dropout(
-                rng=hk.next_rng_key(), rate=dropout_rate, x=h_dense
-            )
+            h_dense = hk.dropout(rng=hk.next_rng_key(), rate=dropout_rate, x=h_dense)
             h = h + h_dense
         return layer_norm(h)  # [B, T, D]
 
@@ -337,13 +314,9 @@ class Decoder(hk.Module):
                 self.config.key_size,
                 w_init,
                 model_size=self.config.model_size,
-            )(
-                h_norm, h_norm, h_norm, target_mask
-            )  # [B, T, D]
+            )(h_norm, h_norm, h_norm, target_mask)  # [B, T, D]
 
-            h_attn = hk.dropout(
-                rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn
-            )
+            h_attn = hk.dropout(rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn)
             h = h + h_attn
 
             # 2. Multi-head cross-attention with encoder output, Add & Norm
@@ -353,13 +326,9 @@ class Decoder(hk.Module):
                 self.config.key_size,
                 w_init,
                 model_size=self.config.model_size,
-            )(
-                query=h_norm, key=e, value=e, mask=target_source_mask
-            )  # [B, T, D]
+            )(query=h_norm, key=e, value=e, mask=target_source_mask)  # [B, T, D]
 
-            h_attn = hk.dropout(
-                rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn
-            )
+            h_attn = hk.dropout(rng=hk.next_rng_key(), rate=dropout_rate, x=h_attn)
             h = h + h_attn
 
             # 3. FFN block
@@ -370,11 +339,8 @@ class Decoder(hk.Module):
                 w_init=w_init,
             )(h_norm)
 
-            h_dense = hk.dropout(
-                rng=hk.next_rng_key(), rate=dropout_rate, x=h_dense
-            )
+            h_dense = hk.dropout(rng=hk.next_rng_key(), rate=dropout_rate, x=h_dense)
             h = h + h_dense
-
         return layer_norm(h)  # [B, T, D]
 
 
@@ -392,9 +358,7 @@ class Transformer:
     ) -> jnp.ndarray:
         sequence_len = source_tokens.shape[-1]
         dropout_rate = self.config.dropout_rate if is_training else 0.0
-        embeddings = Embeddings(
-            self.config.model_size, self.config.vocab_size
-        )  # [V, D]
+        embeddings = Embeddings(self.config.model_size, self.config.vocab_size)  # [V, D]
         positional_embeddings = hk.get_parameter(
             "positional_embeddings",
             [sequence_len, self.config.model_size],

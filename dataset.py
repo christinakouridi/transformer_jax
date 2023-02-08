@@ -69,9 +69,7 @@ def get_train_batch_iterator(
 
 
 def encode_test_data(data_iterator, tokenizer, sequence_len):
-    encode_vectorised = np.vectorize(
-        lambda x: encode(x, tokenizer, sequence_len)
-    )
+    encode_vectorised = np.vectorize(lambda x: encode(x, tokenizer, sequence_len))
     return encode_vectorised(data_iterator["translation"])
 
 
