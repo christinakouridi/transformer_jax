@@ -14,7 +14,7 @@ exp:
   batch_size: 32
   num_shuffle_batches: 10
   learning_rate: 3e-5
-  label_smoothing: 0.1
+  label_smoothing: 0.1  # only applied during training; set to null to disable.
   max_steps: 10_000_000
   is_training: True
   log_frequency: 50
