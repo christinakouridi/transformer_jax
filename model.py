@@ -21,7 +21,6 @@ def layer_norm(x: jnp.ndarray, name: Optional[str] = None) -> jnp.ndarray:
 @dataclass
 class TransformerConfig:
     """Bundles together parameters of the transformer model."""
-
     key_size: int = 64
     ff_size: int = 2048
     model_size: int = 512
@@ -33,6 +32,7 @@ class TransformerConfig:
 
 
 class Embeddings(hk.Module):
+    """Embeddings layer. A shared source-target vocabulary is used."""
     def __init__(self, model_size: int, vocab_size: int) -> jnp.ndarray:
         super().__init__()
         self.token_embedding_map = hk.Embed(
@@ -42,11 +42,9 @@ class Embeddings(hk.Module):
 
     def get_token_embedding_map(self) -> jnp.ndarray:
         return self.token_embedding_map.embeddings
-
+    
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # TODO(CK): Speed up indexing with vmap.
-        # [B, T, D]
-        return self.token_embedding_map(x) * jnp.sqrt(self.model_size)
+        return self.token_embedding_map(x) * jnp.sqrt(self.model_size)  # [B, T, D]
 
 
 class PositionalEmbeddings(hk.initializers.Initializer):
@@ -76,8 +74,8 @@ class PositionalEmbeddings(hk.initializers.Initializer):
 
 
 class FFNBlock(hk.Module):
-    """Feed forward neural netwrk block, applied to each token independently unlike the
-    attention layers.
+    """Feed forward neural network block. 
+    This is applied to each token independently unlike the attention layers.
     """
     def __init__(
         self,
@@ -92,7 +90,7 @@ class FFNBlock(hk.Module):
 
     def __call__(self, x: jnp.ndarray):
         y = self.layer_1(x)
-        y = jax.nn.gelu(y)  # Improvement over ReLU, also used in GPT-2.
+        y = jax.nn.gelu(y)  # Smoother than ReLU, also used in GPT-2.
         y = self.layer_2(y)
         return y
 
@@ -345,7 +343,12 @@ class Decoder(hk.Module):
 
 
 @dataclass
-class Transformer:
+class Transformer(hk.Module):
+    """Transformer module.
+
+    This follows the encoder-decoder architecture in the "Attention is All You Need" 
+    paper.
+    """
     config: TransformerConfig
 
     def __call__(

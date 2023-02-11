@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Generator
 
 import haiku as hk
 import hydra
@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from chex import PRNGKey
 from datasets import load_dataset
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
@@ -59,6 +60,7 @@ def main(cfg: DictConfig):
         padding_side="right",
         truncation_side="right",
     )
+    pad_token = int(tokenizer.pad_token_id)
 
     # ===== Data batch loader =====
     # At the moment this optimises for memory and not speed.
@@ -88,11 +90,12 @@ def main(cfg: DictConfig):
         num_heads=cfg.model.num_heads,
         num_layers=cfg.model.num_layers,
         dropout_rate=cfg.model.dropout_rate,
-        pad_token=int(tokenizer.pad_token_id),
+        pad_token=pad_token,
     )
     optimiser = optax.chain(
         optax.clip_by_global_norm(cfg.exp.grad_clip_value),
         # TODO(CK): test if adafactor can reserve memory
+        # TODO(CK): add learning rate scheduler
         optax.adam(cfg.exp.learning_rate),
     )
 
@@ -111,7 +114,12 @@ def main(cfg: DictConfig):
         return model(source_tokens, target_tokens, is_training=is_training)
 
     @hk.transform
-    def loss_fn(source_tokens, target_tokens, is_training: bool = True) -> jnp.ndarray:
+    def loss_fn(
+        source_tokens: jnp.ndarray, 
+        target_tokens: jnp.ndarray, 
+        pad_token: int, 
+        is_training: bool = True
+    ) -> jnp.ndarray:
         """Computes the loss of the language model with respect to its parameters."""
         # TODO(CK): check indexing
         logits = forward(
@@ -119,17 +127,22 @@ def main(cfg: DictConfig):
         )  # [B, T, V]
         targets = jax.nn.one_hot(target_tokens, cfg.model.vocab_size)  # [B, T, V]
 
-        mask = jnp.greater(source_tokens, 0)  # TODO(CK): needed?
+        mask = jnp.not_equal(target_tokens, pad_token)
         log_likelihood = jnp.sum(targets * jax.nn.log_softmax(logits), axis=-1)
         return -jnp.sum(log_likelihood * mask) / jnp.sum(mask)
 
     @jax.jit
-    def update(state: TrainingState, source_tokens, target_tokens):
+    def update(
+        state: TrainingState, 
+        source_tokens: jnp.ndarray, 
+        target_tokens: jnp.ndarray, 
+        pad_token: int
+    ):
         """Performs an sgd step and returns training metrics."""
         key, sub_key = jax.random.split(state.key)
         loss_and_grad_fn = jax.value_and_grad(loss_fn.apply)
         loss, gradients = loss_and_grad_fn(
-            state.params, sub_key, source_tokens, target_tokens
+            state.params, sub_key, source_tokens, target_tokens, pad_token
         )
 
         updates, new_opt_state = optimiser.update(gradients, state.opt_state)
@@ -144,9 +157,14 @@ def main(cfg: DictConfig):
         return new_state, metrics
 
     @jax.jit
-    def init(key, source_tokens, target_tokens) -> TrainingState:
+    def init(
+        key: PRNGKey, 
+        source_tokens: jnp.ndarray, 
+        target_tokens: jnp.ndarray, 
+        pad_token: int
+    ) -> TrainingState:
         key, sub_key = jax.random.split(key)
-        initial_params = loss_fn.init(sub_key, source_tokens, target_tokens)
+        initial_params = loss_fn.init(sub_key, source_tokens, target_tokens, pad_token)
         initial_opt_state = optimiser.init(initial_params)
         return TrainingState(
             params=initial_params,
@@ -157,32 +175,36 @@ def main(cfg: DictConfig):
 
     # ===== Evaluation =====
     @jax.jit
-    def _eval_step(state, source_tokens, target_tokens):
-        key, sub_key = jax.random.split(state.key)
+    def _eval_step(
+        state: TrainingState, 
+        source_tokens: jnp.ndarray, 
+        target_tokens: jnp.ndarray, 
+        pad_token: int
+    ) -> jnp.ndarray:
+        _, sub_key = jax.random.split(state.key)
         loss_and_grad_fn = jax.value_and_grad(loss_fn.apply)
         loss, _ = loss_and_grad_fn(
             state.params,
             sub_key,
             source_tokens,
             target_tokens,
+            pad_token,
             is_training=False
         )
         return loss
 
-    def evaluate(state: TrainingState, batch_iterator):
+    def evaluate(
+        state: TrainingState, batch_iterator: Generator, pad_token: int
+    ) -> jnp.ndarray:
         losses = []
         for source_tokens, target_tokens in batch_iterator:
-            losses.append(
-                jax.vmap(_eval_step, in_axes=(None, 1, 1))(
-                    state, source_tokens[:, None, :], target_tokens[:, None, :]
-                )
-            )
+            losses.append(_eval_step(state, source_tokens, target_tokens, pad_token))
         return jnp.mean(jnp.asarray(losses))
 
     # ===== Initialisation =====
     key = jax.random.PRNGKey(cfg.exp.train_seed)
     source_tokens, target_tokens = next(train_batch_iterator)
-    state = init(key, source_tokens, target_tokens)
+    state = init(key, source_tokens, target_tokens, pad_token)
     param_count = sum(x.size for x in jax.tree_util.tree_leaves(state.params))
     log.info(f"Number of parameters: {param_count // (10**6)} million")
 
@@ -190,16 +212,15 @@ def main(cfg: DictConfig):
     start_time = time.time()
     for step in range(cfg.exp.max_steps):
         source_tokens, target_tokens = next(train_batch_iterator)
-        state, metrics = update(state, source_tokens, target_tokens)
+        state, metrics = update(state, source_tokens, target_tokens, pad_token)
 
         if step % cfg.exp.log_frequency == 0:
             metrics["SPS"] = cfg.exp.log_frequency / (time.time() - start_time)
 
-            if step % cfg.exp.test_frequency == 0:
-                test_batch_iterator = get_test_batch_iterator(
-                    test_data, cfg.exp.batch_size, shuffle=True, rng=rng_test
-                )
-                metrics["test_loss"] = evaluate(state, test_batch_iterator)
+            test_batch_iterator = get_test_batch_iterator(
+                test_data, cfg.exp.batch_size, shuffle=True, rng=rng_test
+            )
+            metrics["test_loss"] = evaluate(state, test_batch_iterator, pad_token)
 
             log.info("".join(f"{k}: {v:.6f} |" for k, v in metrics.items()))
             start_time = time.time()
