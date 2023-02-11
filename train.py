@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import NamedTuple, Generator
+from typing import NamedTuple, Generator, Optional
 
 import haiku as hk
 import hydra
@@ -15,11 +15,15 @@ from datasets import load_dataset
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
-
+from utils import apply_label_smoothing
 from dataset import encode_test_data, get_test_batch_iterator, get_train_batch_iterator
 from model import Transformer, TransformerConfig
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+
+# Reserves memory through deallocation but > 30% slower.
+# os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
 
 log = logging.getLogger(__name__)
 logging.getLogger("datasets_modules").setLevel(logging.ERROR)
@@ -112,20 +116,24 @@ def main(cfg: DictConfig):
         """
         model = Transformer(config=config)
         return model(source_tokens, target_tokens, is_training=is_training)
-
+    
     @hk.transform
     def loss_fn(
         source_tokens: jnp.ndarray, 
         target_tokens: jnp.ndarray, 
         pad_token: int, 
-        is_training: bool = True
+        label_smoothing: Optional[float] = None,
+        is_training: bool = True,
     ) -> jnp.ndarray:
         """Computes the loss of the language model with respect to its parameters."""
-        # TODO(CK): check indexing
+        # TODO(CK): update indexing to handle BOS end EOS tokens.
         logits = forward(
             source_tokens, target_tokens, is_training, transformer_cfg
         )  # [B, T, V]
         targets = jax.nn.one_hot(target_tokens, cfg.model.vocab_size)  # [B, T, V]
+
+        if label_smoothing is not None:
+            targets = apply_label_smoothing(targets, label_smoothing)
 
         mask = jnp.not_equal(target_tokens, pad_token)
         log_likelihood = jnp.sum(targets * jax.nn.log_softmax(logits), axis=-1)
@@ -136,13 +144,19 @@ def main(cfg: DictConfig):
         state: TrainingState, 
         source_tokens: jnp.ndarray, 
         target_tokens: jnp.ndarray, 
-        pad_token: int
+        pad_token: int,
+        label_smoothing: float
     ):
         """Performs an sgd step and returns training metrics."""
         key, sub_key = jax.random.split(state.key)
         loss_and_grad_fn = jax.value_and_grad(loss_fn.apply)
         loss, gradients = loss_and_grad_fn(
-            state.params, sub_key, source_tokens, target_tokens, pad_token
+            state.params,
+            sub_key,
+            source_tokens,
+            target_tokens,
+            pad_token,
+            label_smoothing
         )
 
         updates, new_opt_state = optimiser.update(gradients, state.opt_state)
@@ -161,10 +175,13 @@ def main(cfg: DictConfig):
         key: PRNGKey, 
         source_tokens: jnp.ndarray, 
         target_tokens: jnp.ndarray, 
-        pad_token: int
+        pad_token: int,
+        label_smoothing: int
     ) -> TrainingState:
         key, sub_key = jax.random.split(key)
-        initial_params = loss_fn.init(sub_key, source_tokens, target_tokens, pad_token)
+        initial_params = loss_fn.init(
+            sub_key, source_tokens, target_tokens, pad_token, label_smoothing
+        )
         initial_opt_state = optimiser.init(initial_params)
         return TrainingState(
             params=initial_params,
@@ -175,11 +192,11 @@ def main(cfg: DictConfig):
 
     # ===== Evaluation =====
     @jax.jit
-    def _eval_step(
+    def eval_step(
         state: TrainingState, 
         source_tokens: jnp.ndarray, 
         target_tokens: jnp.ndarray, 
-        pad_token: int
+        pad_token: int,
     ) -> jnp.ndarray:
         _, sub_key = jax.random.split(state.key)
         loss_and_grad_fn = jax.value_and_grad(loss_fn.apply)
@@ -194,25 +211,30 @@ def main(cfg: DictConfig):
         return loss
 
     def evaluate(
-        state: TrainingState, batch_iterator: Generator, pad_token: int
+        state: TrainingState, 
+        batch_iterator: Generator, 
+        pad_token: int, 
     ) -> jnp.ndarray:
         losses = []
         for source_tokens, target_tokens in batch_iterator:
-            losses.append(_eval_step(state, source_tokens, target_tokens, pad_token))
+            losses.append(eval_step(state, source_tokens, target_tokens, pad_token))
         return jnp.mean(jnp.asarray(losses))
 
     # ===== Initialisation =====
     key = jax.random.PRNGKey(cfg.exp.train_seed)
     source_tokens, target_tokens = next(train_batch_iterator)
-    state = init(key, source_tokens, target_tokens, pad_token)
+    state = init(key, source_tokens, target_tokens, pad_token, cfg.exp.label_smoothing)
     param_count = sum(x.size for x in jax.tree_util.tree_leaves(state.params))
     log.info(f"Number of parameters: {param_count // (10**6)} million")
 
     # ===== Training =====
     start_time = time.time()
     for step in range(cfg.exp.max_steps):
+
         source_tokens, target_tokens = next(train_batch_iterator)
-        state, metrics = update(state, source_tokens, target_tokens, pad_token)
+        state, metrics = update(
+            state, source_tokens, target_tokens, pad_token, cfg.exp.label_smoothing
+        )
 
         if step % cfg.exp.log_frequency == 0:
             metrics["SPS"] = cfg.exp.log_frequency / (time.time() - start_time)
