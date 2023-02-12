@@ -1,0 +1,5 @@
+--find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+jax[cuda]>=0.4.1
+--find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+jaxlib[cuda11_cudnn86]>=0.4.1
+#jax[cpu]==0.4.1 # Use only this line instead of the above for CPU-only support

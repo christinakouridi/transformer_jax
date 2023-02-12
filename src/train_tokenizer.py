@@ -81,7 +81,7 @@ def main(cfg: DictConfig):
     bpe.train(data)
     path = Path.cwd() / cfg.tokenizer.save_path
     bpe.save(path)
-    log.info(f"Trained finished. Stored trained tokenizer in: {path}")
+    log.info(f"Training finished. Stored trained tokenizer in: {path}")
 
     # Checks.
     output = bpe.tokenizer.encode("Training a transformer in JAX is fun")
