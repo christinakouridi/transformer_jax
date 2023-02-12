@@ -11,7 +11,7 @@ All experiments apply the original encoder-decoder model to the WMT 2014 Enlgish
 ```shell
 $ conda create --name transformer_jax python=3.9
 ```
-2. Within that environment, install JAX. You can follow the instructions in the [official JAX repository](https://github.com/google/jax#installation) as the installation will differ depending on your hardware accelerator. The requirements that I have used can be found in `requiremenets_jax.txt`.
+2. Within that environment, install JAX. Follow the instructions in the [official JAX repository](https://github.com/google/jax#installation) as the installation will differ depending on your hardware accelerator. The requirements that I have used can be found in `requiremenets_jax.txt`.
 
 3. Install the remaining dependencies.
 ```shell
@@ -40,5 +40,5 @@ $ python src/train_tokenizer.py
 $ python src/train.py
 ```
 
-## Changes over the original architecture
+## Changes on the original architecture
 To be included soon!
