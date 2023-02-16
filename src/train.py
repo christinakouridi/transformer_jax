@@ -15,7 +15,7 @@ from datasets import load_dataset
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
-from utils import apply_label_smoothing
+from utils import apply_label_smoothing, get_optimizer
 from dataset import encode_test_data, get_test_batch_iterator, get_train_batch_iterator
 from model import Transformer, TransformerConfig
 
@@ -96,11 +96,11 @@ def main(cfg: DictConfig):
         dropout_rate=cfg.model.dropout_rate,
         pad_token=pad_token,
     )
-    optimiser = optax.chain(
-        optax.clip_by_global_norm(cfg.exp.grad_clip_value),
-        # TODO(CK): test if adafactor can reserve memory
-        # TODO(CK): add learning rate scheduler
-        optax.adam(cfg.exp.learning_rate),
+    # TODO(CK): add learning rate scheduler.
+    optimizer = get_optimizer(
+        name=cfg.exp.optimizer_name,
+        learning_rate=cfg.exp.learning_rate,
+        grad_clip_value=cfg.exp.grad_clip_value
     )
 
     def forward(
@@ -159,7 +159,9 @@ def main(cfg: DictConfig):
             label_smoothing
         )
 
-        updates, new_opt_state = optimiser.update(gradients, state.opt_state)
+        updates, new_opt_state = optimizer.update(
+            gradients, state.opt_state, params=state.params
+        )
         new_params = optax.apply_updates(state.params, updates)
         new_state = TrainingState(
             params=new_params,
@@ -182,7 +184,7 @@ def main(cfg: DictConfig):
         initial_params = loss_fn.init(
             sub_key, source_tokens, target_tokens, pad_token, label_smoothing
         )
-        initial_opt_state = optimiser.init(initial_params)
+        initial_opt_state = optimizer.init(initial_params)
         return TrainingState(
             params=initial_params,
             opt_state=initial_opt_state,

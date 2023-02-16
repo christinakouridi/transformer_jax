@@ -13,6 +13,7 @@ exp:
   train_seed: 3
   batch_size: 32
   num_shuffle_batches: 10
+  optimizer_name: 'adam' # options: 'adam', 'adafactor'
   learning_rate: 3e-5
   label_smoothing: 0.1  # only applied during training; set to null to disable.
   max_steps: 10_000_000
